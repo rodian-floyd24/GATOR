@@ -1,0 +1,101 @@
+-- Introduction to Monitoring Usage and Billing (personalized, idempotent)
+-- Uses: ROLE TRAINING_ROLE, WH GATOR_WH, SCHEMA SNOWFLAKE.ACCOUNT_USAGE
+
+-- 7.1.1 Set context
+USE ROLE TRAINING_ROLE;
+
+CREATE WAREHOUSE IF NOT EXISTS GATOR_WH
+  WITH WAREHOUSE_SIZE = XSMALL
+  AUTO_SUSPEND = 60
+  INITIALLY_SUSPENDED = TRUE;
+USE WAREHOUSE GATOR_WH;
+
+USE SCHEMA SNOWFLAKE.ACCOUNT_USAGE;
+
+-- 7.1.2 Examine credit usage by warehouse
+-- Credits used (all time ~ last 365 days)
+SELECT WAREHOUSE_NAME,
+       SUM(CREDITS_USED_COMPUTE) AS CREDITS_USED_COMPUTE_SUM
+FROM ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+GROUP BY 1
+ORDER BY 2 DESC;
+
+-- Credits used (past N interval) -- Past 7 days
+SELECT WAREHOUSE_NAME,
+       SUM(CREDITS_USED_COMPUTE) AS CREDITS_USED_COMPUTE_SUM
+FROM ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY
+WHERE START_TIME >= DATEADD(DAY, -7, CURRENT_TIMESTAMP())
+GROUP BY 1
+ORDER BY 2 DESC;
+
+-- 7.1.3 Determine warehouses without resource monitors
+SHOW WAREHOUSES;
+
+SELECT "name" AS WAREHOUSE_NAME,
+       "size" AS WAREHOUSE_SIZE
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "resource_monitor" IS NULL;  -- filter truly missing monitors
+
+-- 7.2.1 Most expensive queries from the last 60 days (relative cost)
+WITH WAREHOUSE_SIZE AS (
+  SELECT WAREHOUSE_SIZE, "CREDITS/HOUR"
+  FROM (
+    SELECT 'XSMALL'  AS WAREHOUSE_SIZE, 1   AS "CREDITS/HOUR" UNION ALL
+    SELECT 'SMALL'   AS WAREHOUSE_SIZE, 2   AS "CREDITS/HOUR" UNION ALL
+    SELECT 'MEDIUM'  AS WAREHOUSE_SIZE, 4   AS "CREDITS/HOUR" UNION ALL
+    SELECT 'LARGE'   AS WAREHOUSE_SIZE, 8   AS "CREDITS/HOUR" UNION ALL
+    SELECT 'XLARGE'  AS WAREHOUSE_SIZE, 16  AS "CREDITS/HOUR" UNION ALL
+    SELECT '2XLARGE' AS WAREHOUSE_SIZE, 32  AS "CREDITS/HOUR" UNION ALL
+    SELECT '3XLARGE' AS WAREHOUSE_SIZE, 64  AS "CREDITS/HOUR" UNION ALL
+    SELECT '4XLARGE' AS WAREHOUSE_SIZE, 128 AS "CREDITS/HOUR"
+  )
+),
+QUERY_HISTORY AS (
+  SELECT QH.QUERY_ID,
+         QH.QUERY_TEXT,
+         QH.USER_NAME,
+         QH.ROLE_NAME,
+         QH.EXECUTION_TIME,
+         QH.WAREHOUSE_SIZE
+  FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY QH
+  WHERE START_TIME > DATEADD(MONTH, -2, CURRENT_TIMESTAMP())
+)
+SELECT QH.QUERY_ID,
+       'https://' || CURRENT_ACCOUNT() || '.snowflakecomputing.com/console#/monitoring/queries/detail?queryId=' || QH.QUERY_ID AS QU,
+       QH.QUERY_TEXT,
+       QH.USER_NAME,
+       QH.ROLE_NAME,
+       QH.EXECUTION_TIME AS EXECUTION_TIME_MILLISECONDS,
+       (QH.EXECUTION_TIME / 1000)                AS EXECUTION_TIME_SECONDS,
+       (QH.EXECUTION_TIME / (1000*60))           AS EXECUTION_TIME_MINUTES,
+       (QH.EXECUTION_TIME / (1000*60*60))        AS EXECUTION_TIME_HOURS,
+       WS.WAREHOUSE_SIZE,
+       WS."CREDITS/HOUR",
+       (QH.EXECUTION_TIME / (1000*60*60)) * WS."CREDITS/HOUR" AS RELATIVE_PERFORMANCE_COST
+FROM QUERY_HISTORY QH
+JOIN WAREHOUSE_SIZE WS ON WS.WAREHOUSE_SIZE = UPPER(QH.WAREHOUSE_SIZE)
+ORDER BY RELATIVE_PERFORMANCE_COST DESC
+LIMIT 200;
+
+-- 7.2.2 Top 10 queries with most remote spillage (last 45 days)
+SELECT 
+  query_id,
+  SUBSTR(query_text, 1, 50) AS partial_query_text,
+  user_name,
+  warehouse_name,
+  warehouse_size,
+  BYTES_SPILLED_TO_REMOTE_STORAGE,
+  start_time,
+  end_time,
+  total_elapsed_time/1000 AS total_elapsed_time
+FROM snowflake.account_usage.query_history
+WHERE BYTES_SPILLED_TO_REMOTE_STORAGE > 0
+  AND start_time::date > DATEADD(DAY, -45, CURRENT_DATE)
+ORDER BY BYTES_SPILLED_TO_REMOTE_STORAGE DESC
+LIMIT 10;
+
+-- 7.3.0 Key takeaways
+-- - ACCOUNT_USAGE secure views surface usage, metering, storage, and history
+-- - Resource monitors cap credits over intervals to control spend
+-- - Expensive queries and spillage can guide optimization and sizing
+
