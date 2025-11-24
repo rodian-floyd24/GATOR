@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 from snowflake.snowpark.context import get_active_session
 from datetime import date
 
@@ -208,6 +209,100 @@ for tab, (title, builder) in zip(tabs, QUERIES):
                 st.info("No rows returned for the current filters.")
             else:
                 st.dataframe(df, use_container_width=True)
+
+                # ---------- PLOTS PER QUERY ----------
+                if title.startswith("Query 1"):
+                    chart = (
+                        alt.Chart(df)
+                        .mark_bar()
+                        .encode(
+                            x=alt.X("bond_id:N", sort="-y", title="Bond ID"),
+                            y=alt.Y("total_quantity:Q", title="Total Quantity Traded"),
+                            tooltip=[
+                                "bond_id",
+                                "issuer_name",
+                                "state",
+                                "purpose_category",
+                                "avg_trade_price",
+                                "total_quantity",
+                            ],
+                        )
+                        .properties(height=400)
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+
+                elif title.startswith("Query 2"):
+                    chart = (
+                        alt.Chart(df)
+                        .mark_rect()
+                        .encode(
+                            x=alt.X("state:N", title="State"),
+                            y=alt.Y("purpose_category:N", title="Purpose"),
+                            color=alt.Color("total_quantity:Q", title="Total Quantity"),
+                            tooltip=[
+                                "state",
+                                "purpose_category",
+                                "bonds_traded",
+                                "total_quantity",
+                                "avg_trade_price",
+                            ],
+                        )
+                        .properties(height=400)
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+
+                elif title.startswith("Query 3"):
+                    df_plot = df.copy()
+                    df_plot["migration"] = df_plot["first_rating"] + " → " + df_plot["latest_rating"]
+                    counts = df_plot["migration"].value_counts().reset_index()
+                    counts.columns = ["migration", "n_bonds"]
+
+                    chart = (
+                        alt.Chart(counts)
+                        .mark_bar()
+                        .encode(
+                            x=alt.X("migration:N", sort="-y", title="Rating Migration"),
+                            y=alt.Y("n_bonds:Q", title="Number of Bonds"),
+                            tooltip=["migration", "n_bonds"],
+                        )
+                        .properties(height=400)
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+
+                elif title.startswith("Query 4"):
+                    chart = (
+                        alt.Chart(df)
+                        .mark_line(point=True)
+                        .encode(
+                            x=alt.X("trade_month:N", title="Month"),
+                            y=alt.Y("total_quantity:Q", title="Total Quantity Traded"),
+                            tooltip=["trade_month", "trades_count", "total_quantity", "avg_trade_price"],
+                        )
+                        .properties(height=400)
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+
+                elif title.startswith("Query 5"):
+                    chart = (
+                        alt.Chart(df)
+                        .mark_line(point=True)
+                        .encode(
+                            x=alt.X("trade_month:N", title="Month"),
+                            y=alt.Y("avg_coupon_spread:Q", title="Avg Coupon – 10Y Treasury"),
+                            color=alt.Color("state:N", title="State"),
+                            tooltip=[
+                                "state",
+                                "trade_month",
+                                "avg_coupon_rate",
+                                "avg_treasury_10yr",
+                                "avg_coupon_spread",
+                            ],
+                        )
+                        .properties(height=400)
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+                # ---------- END PLOTS ----------
+
                 st.download_button(
                     "Download CSV",
                     data=df.to_csv(index=False).encode("utf-8"),
