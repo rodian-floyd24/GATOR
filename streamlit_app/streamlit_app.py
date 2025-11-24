@@ -209,11 +209,13 @@ for tab, (title, builder) in zip(tabs, QUERIES):
                 st.info("No rows returned for the current filters.")
             else:
                 st.dataframe(df, use_container_width=True)
+                df_plot = df.copy()
+                df_plot.columns = [c.lower() for c in df_plot.columns]
 
                 # ---------- PLOTS PER QUERY ----------
                 if title.startswith("Query 1"):
                     chart = (
-                        alt.Chart(df)
+                        alt.Chart(df_plot)
                         .mark_bar()
                         .encode(
                             x=alt.X("bond_id:N", sort="-y", title="Bond ID"),
@@ -233,7 +235,7 @@ for tab, (title, builder) in zip(tabs, QUERIES):
 
                 elif title.startswith("Query 2"):
                     chart = (
-                        alt.Chart(df)
+                        alt.Chart(df_plot)
                         .mark_rect()
                         .encode(
                             x=alt.X("state:N", title="State"),
@@ -252,9 +254,9 @@ for tab, (title, builder) in zip(tabs, QUERIES):
                     st.altair_chart(chart, use_container_width=True)
 
                 elif title.startswith("Query 3"):
-                    df_plot = df.copy()
-                    df_plot["migration"] = df_plot["first_rating"] + " → " + df_plot["latest_rating"]
-                    counts = df_plot["migration"].value_counts().reset_index()
+                    df_q3 = df_plot.copy()
+                    df_q3["migration"] = df_q3["first_rating"] + " → " + df_q3["latest_rating"]
+                    counts = df_q3["migration"].value_counts().reset_index()
                     counts.columns = ["migration", "n_bonds"]
 
                     chart = (
@@ -271,7 +273,7 @@ for tab, (title, builder) in zip(tabs, QUERIES):
 
                 elif title.startswith("Query 4"):
                     chart = (
-                        alt.Chart(df)
+                        alt.Chart(df_plot)
                         .mark_line(point=True)
                         .encode(
                             x=alt.X("trade_month:N", title="Month"),
@@ -284,7 +286,7 @@ for tab, (title, builder) in zip(tabs, QUERIES):
 
                 elif title.startswith("Query 5"):
                     chart = (
-                        alt.Chart(df)
+                        alt.Chart(df_plot)
                         .mark_line(point=True)
                         .encode(
                             x=alt.X("trade_month:N", title="Month"),
