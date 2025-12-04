@@ -9,6 +9,35 @@ st.caption("Runs the five Snowflake queries from the Week 11 analysis against GA
 
 session = get_active_session()
 
+QUERY_SUMMARIES = {
+    "Query 1 – Top traded bonds with issuer & purpose": {
+        "purpose": "Identify the most actively traded bonds and show their issuers, purposes, and pricing.",
+        "tables": "trades → bonds → issuers (issuer names/states) + bond_purposes for category labels.",
+        "filters": "Trade date range, optional state filter, row limit; quantity drives the ordering.",
+    },
+    "Query 2 – State–purpose hotspots": {
+        "purpose": "Spot combinations of state and bond purpose that concentrate trading activity.",
+        "tables": "trades → bonds → issuers (states) + bond_purposes; aggregates by state/purpose.",
+        "filters": "Trade date range, optional state filter, row limit; ignores cells with <100 quantity.",
+    },
+    "Query 3 – Rating migration monitor": {
+        "purpose": "Flag bonds whose credit rating changed over time.",
+        "tables": "bonds → issuers + credit_ratings (first vs latest rating using window functions).",
+        "filters": "Optional state filter, row limit; returns only bonds where first and latest ratings differ.",
+    },
+    "Query 4 – Monthly trade trendline": {
+        "purpose": "Track trading intensity by month.",
+        "tables": "trades → bonds → issuers; aggregates trades, quantity, and prices by month.",
+        "filters": "Trade date range, optional state filter, row limit; ordered chronologically.",
+    },
+    "Query 5 – Coupon spread vs 10Y Treasury": {
+        "purpose": "Compare muni coupon rates to the 10Y Treasury by state/month to see spread patterns.",
+        "tables": "trades → bonds (coupon_rate) → issuers joined to economic_indicators (TREASURY_10YR).",
+        "filters": "Trade date range, optional state filter, row limit; keeps months with ≥10 trades.",
+    },
+}
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def get_meta():
     date_df = session.sql(
@@ -54,6 +83,11 @@ selected_states = st.sidebar.multiselect(
     default=state_options,
     help="Filter issuer states (leave all selected for no state filter).",
 )
+if len(state_options) == 5:
+    st.sidebar.caption(
+        "Only five states are available (CA, FL, IL, NY, TX) because the sample dataset "
+        "includes issuers and macro data for those geographies."
+    )
 
 row_limit = st.sidebar.slider("Row limit", min_value=10, max_value=200, value=50, step=10)
 
@@ -201,6 +235,13 @@ tabs = st.tabs([q[0] for q in QUERIES])
 for tab, (title, builder) in zip(tabs, QUERIES):
     with tab:
         st.subheader(title)
+        info = QUERY_SUMMARIES.get(title)
+        if info:
+            st.markdown(
+                f"**Purpose:** {info['purpose']}\n\n"
+                f"**Tables/joins:** {info['tables']}\n\n"
+                f"**Filters:** {info['filters']}"
+            )
         sql = builder()
         st.code(sql.strip(), language="sql")
         try:
@@ -220,6 +261,7 @@ for tab, (title, builder) in zip(tabs, QUERIES):
                         .encode(
                             x=alt.X("bond_id:N", sort="-y", title="Bond ID"),
                             y=alt.Y("total_quantity:Q", title="Total Quantity Traded"),
+                            color=alt.Color("purpose_category:N", title="Purpose"),
                             tooltip=[
                                 "bond_id",
                                 "issuer_name",
@@ -240,7 +282,11 @@ for tab, (title, builder) in zip(tabs, QUERIES):
                         .encode(
                             x=alt.X("state:N", title="State"),
                             y=alt.Y("purpose_category:N", title="Purpose"),
-                            color=alt.Color("total_quantity:Q", title="Total Quantity"),
+                            color=alt.Color(
+                                "total_quantity:Q",
+                                title="Total Quantity",
+                                scale=alt.Scale(scheme="blues"),
+                            ),
                             tooltip=[
                                 "state",
                                 "purpose_category",
@@ -256,8 +302,17 @@ for tab, (title, builder) in zip(tabs, QUERIES):
                 elif title.startswith("Query 3"):
                     df_q3 = df_plot.copy()
                     df_q3["migration"] = df_q3["first_rating"] + " → " + df_q3["latest_rating"]
-                    counts = df_q3["migration"].value_counts().reset_index()
-                    counts.columns = ["migration", "n_bonds"]
+                    counts = (
+                        df_q3.groupby("migration")
+                        .agg(
+                            n_bonds=("bond_id", "nunique"),
+                            bonds=(
+                                "bond_id",
+                                lambda s: ", ".join(sorted({str(b) for b in s if pd.notna(b)})),
+                            ),
+                        )
+                        .reset_index()
+                    )
 
                     chart = (
                         alt.Chart(counts)
@@ -265,7 +320,7 @@ for tab, (title, builder) in zip(tabs, QUERIES):
                         .encode(
                             x=alt.X("migration:N", sort="-y", title="Rating Migration"),
                             y=alt.Y("n_bonds:Q", title="Number of Bonds"),
-                            tooltip=["migration", "n_bonds"],
+                            tooltip=["migration", "n_bonds", "bonds"],
                         )
                         .properties(height=400)
                     )
@@ -290,7 +345,11 @@ for tab, (title, builder) in zip(tabs, QUERIES):
                         .mark_line(point=True)
                         .encode(
                             x=alt.X("trade_month:N", title="Month"),
-                            y=alt.Y("avg_coupon_spread:Q", title="Avg Coupon – 10Y Treasury"),
+                            y=alt.Y(
+                                "avg_coupon_spread:Q",
+                                title="Avg Coupon – 10Y Treasury",
+                                scale=alt.Scale(domain=[2.5, 3.5]),
+                            ),
                             color=alt.Color("state:N", title="State"),
                             tooltip=[
                                 "state",
