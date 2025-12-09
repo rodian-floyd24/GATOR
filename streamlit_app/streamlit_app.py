@@ -72,7 +72,7 @@ def get_meta():
         states = states_df["STATE_CODE"].dropna().tolist()
         return min_date, max_date, states
     # Fallback to local data if Snowflake/Snowpark is unavailable
-    df_local, _, _ = load_local_data()
+    df_local, _, _, _ = load_visual_data()
     min_date = df_local["trade_date"].min().date()
     max_date = df_local["trade_date"].max().date()
     states = sorted(df_local["state_code"].dropna().unique().tolist())
@@ -86,19 +86,44 @@ def run_query(sql: str):
     return session.sql(sql).to_pandas()
 
 
-# ---------- LOCAL DATA LAYER FOR VISUALIZATIONS ----------
+# ---------- DATA LAYER FOR VISUALIZATIONS ----------
 @st.cache_data(ttl=600, show_spinner=False)
-def load_local_data():
-    bonds = pd.read_csv(BASE_DIR / "bonds.csv", parse_dates=["issue_date", "maturity_date"])
-    trades = pd.read_csv(BASE_DIR / "trades.csv", parse_dates=["trade_date"]).rename(
-        columns={"price": "trade_price", "yield_pct": "yield"}
-    )
-    issuers = pd.read_csv(BASE_DIR / "issuers.csv")
+def load_visual_data():
+    """
+    Load from Snowflake tables when a session is available; otherwise fall back to local CSVs.
+    """
+    if session:
+        bonds = session.table("GATOR_DB.MUNI.BONDS").to_pandas()
+        trades = session.table("GATOR_DB.MUNI.TRADES").to_pandas()
+        issuers = session.table("GATOR_DB.MUNI.ISSUERS").to_pandas()
+        purposes = session.table("GATOR_DB.MUNI.BOND_PURPOSES").to_pandas()
+        ratings = session.table("GATOR_DB.MUNI.CREDIT_RATINGS").to_pandas()
+        econ = session.table("GATOR_DB.MUNI.ECONOMIC_INDICATORS").to_pandas()
+        source = "Snowflake tables (GATOR_DB.MUNI)"
+    else:
+        bonds = pd.read_csv(BASE_DIR / "bonds.csv", parse_dates=["issue_date", "maturity_date"])
+        trades = pd.read_csv(BASE_DIR / "trades.csv", parse_dates=["trade_date"]).rename(
+            columns={"price": "trade_price", "yield_pct": "yield"}
+        )
+        issuers = pd.read_csv(BASE_DIR / "issuers.csv")
+        purposes = pd.read_csv(BASE_DIR / "bond_purposes.csv")
+        ratings = pd.read_csv(BASE_DIR / "credit_ratings.csv", parse_dates=["rating_date"])
+        econ = pd.read_csv(BASE_DIR / "economic_indicators.csv", parse_dates=["date"])
+        source = "Local CSVs"
+
     if "state_code" not in issuers.columns and "state" in issuers.columns:
         issuers = issuers.rename(columns={"state": "state_code"})
-    purposes = pd.read_csv(BASE_DIR / "bond_purposes.csv")
-    ratings = pd.read_csv(BASE_DIR / "credit_ratings.csv", parse_dates=["rating_date"])
-    econ = pd.read_csv(BASE_DIR / "economic_indicators.csv", parse_dates=["date"])
+
+    # Normalize date columns from Snowflake
+    for df, cols in [
+        (bonds, ["issue_date", "maturity_date"]),
+        (trades, ["trade_date"]),
+        (ratings, ["rating_date"]),
+        (econ, ["date"]),
+    ]:
+        for col in cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col])
 
     latest = (
         ratings.sort_values(["bond_id", "rating_date"])
@@ -116,7 +141,7 @@ def load_local_data():
         df["state_code"] = df["state"]
     df["time_to_maturity_years"] = (df["maturity_date"] - df["trade_date"]).dt.days / 365.25
     df = df[df["time_to_maturity_years"].between(0, 40)]
-    return df, econ, purposes
+    return df, econ, purposes, source
 
 
 min_date, max_date, state_options = get_meta()
@@ -434,8 +459,9 @@ else:
 
 
 # ---------- LOCAL VISUALIZATIONS ----------
-st.header("Interactive Visualizations (local CSV data)")
-viz_df, econ_df, purposes_df = load_local_data()
+st.header("Interactive Visualizations")
+viz_df, econ_df, purposes_df, source_label = load_visual_data()
+st.caption(f"Source: {source_label}")
 
 state_opts = sorted(viz_df["state_code"].dropna().unique().tolist())
 rating_opts = sorted(viz_df["latest_rating"].dropna().unique().tolist())
