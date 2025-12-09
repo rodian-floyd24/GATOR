@@ -653,4 +653,4 @@ else:
     st.altair_chart(vol_chart, use_container_width=True)
     st.altair_chart(buyer_bar, use_container_width=True)
     st.caption("Buyer type reflects trade-side labels in the transactions table and is a proxy for end-investor mix.")
- in the transactions table and is a proxy for end-investor mix.")
+    in the transactions table and is a proxy for end-investor mix.")
