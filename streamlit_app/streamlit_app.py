@@ -98,7 +98,23 @@ def load_visual_data():
         issuers = session.table("GATOR_DB.MUNI.ISSUERS").to_pandas()
         purposes = session.table("GATOR_DB.MUNI.BOND_PURPOSES").to_pandas()
         ratings = session.table("GATOR_DB.MUNI.CREDIT_RATINGS").to_pandas()
-        econ = session.table("GATOR_DB.MUNI.ECONOMIC_INDICATORS").to_pandas()
+        econ_raw = session.table("GATOR_DB.MUNI.ECONOMIC_INDICATORS").to_pandas()
+        # Normalize column casing
+        for df in [bonds, trades, issuers, purposes, ratings]:
+            df.columns = [c.lower() for c in df.columns]
+        econ_raw.columns = [c.lower() for c in econ_raw.columns]
+        # Filter 10Y treasury series and align columns to CSV schema
+        econ = (
+            econ_raw[econ_raw["indicator_name"] == "TREASURY_10YR"]
+            .rename(
+                columns={
+                    "period_start_date": "date",
+                    "value": "treasury_10yr",
+                    "geo_code": "state",
+                }
+            )[["state", "date", "treasury_10yr"]]
+        )
+        trades = trades.rename(columns={"price": "trade_price", "yield_pct": "yield"})
         source = "Snowflake tables (GATOR_DB.MUNI)"
     else:
         bonds = pd.read_csv(BASE_DIR / "bonds.csv", parse_dates=["issue_date", "maturity_date"])
@@ -114,7 +130,14 @@ def load_visual_data():
     if "state_code" not in issuers.columns and "state" in issuers.columns:
         issuers = issuers.rename(columns={"state": "state_code"})
 
-    # Normalize date columns from Snowflake
+    if "rating_date" not in ratings.columns:
+        alt_date_col = next((c for c in ratings.columns if "date" in c), None)
+        if alt_date_col:
+            ratings = ratings.rename(columns={alt_date_col: "rating_date"})
+        else:
+            ratings["rating_date"] = pd.NaT
+
+    # Normalize date columns from Snowflake/CSV
     for df, cols in [
         (bonds, ["issue_date", "maturity_date"]),
         (trades, ["trade_date"]),
@@ -630,3 +653,4 @@ else:
     st.altair_chart(vol_chart, use_container_width=True)
     st.altair_chart(buyer_bar, use_container_width=True)
     st.caption("Buyer type reflects trade-side labels in the transactions table and is a proxy for end-investor mix.")
+ in the transactions table and is a proxy for end-investor mix.")
